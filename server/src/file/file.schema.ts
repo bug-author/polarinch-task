@@ -1,21 +1,36 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
-@Schema({ timestamps: true })
+@Schema()
+export class Item {
+  @Prop({ required: true })
+  item: string;
+
+  @Prop({ default: '1' })
+  quantity: string;
+
+  @Prop({ required: true, type: Number })
+  price: number;
+
+  @Prop({ required: true })
+  category: string;
+}
+
+@Schema()
 export class File extends Document {
-  @Prop()
+  @Prop({ required: true })
   fileName: string;
 
-  @Prop()
-  date: string;
+  @Prop({ required: true })
+  date: Date;
 
-  @Prop()
-  total: string;
+  @Prop({ required: true, type: Number })
+  total: number;
 
-  @Prop()
-  items: string;
+  @Prop({ type: [Item], default: [] })
+  items: Item[];
 
-  @Prop()
+  @Prop({ type: [String], default: [] })
   insights: string[];
 
   @Prop({ type: Object })

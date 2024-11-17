@@ -169,6 +169,18 @@ export class FileService {
         "insights": "A string of interesting insights about the receipt, can be 2 or 3 sentences max"
       }
       
+      When assigning categories, use the following broad categories:
+      - **Food**: Includes all items related to snacks, sandwiches, beverages, meals, groceries, and any other consumable food products.
+      - **Electronics**: Includes gadgets, devices, appliances, and tech-related items.
+      - **Clothing**: Includes apparel, clothes, accessories, footwear, and any wearable items.
+      - **Health**: Covers health-related products, supplements, medicines, and personal care items.
+      - **Office Supplies**: Includes items like pens, paper, stationery, and any office-related supplies.
+      - **Home Essentials**: Items related to household needs, furniture, cleaning supplies, and general home goods.
+      - **Entertainment**: Includes books, movies, games, subscriptions, or anything meant for leisure.
+      - **Other**: If the item does not fit into any of the above categories, use "other".
+  
+      Always assign an item to the most relevant broad category, and use "Other" only when absolutely no match can be found. The category should always be title case and non-duplicated. Items can not be values like £2 or other tax relevant items like CREDIT.
+  
       JSON response:
       ${JSON.stringify(response)}
     `;

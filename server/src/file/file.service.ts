@@ -14,6 +14,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { File } from './file.schema';
 import { Model } from 'mongoose';
 import Together from 'together-ai';
+import { parse, parseISO, isValid } from 'date-fns';
 
 @Injectable()
 export class FileService {
@@ -34,29 +35,66 @@ export class FileService {
   }
 
   async processFile(filePath: string, fileName: string) {
-    const convertedFilePath = await this.convertHeicToJpg(filePath);
+    if (!fileName) return;
 
+    const convertedFilePath = await this.convertHeicToJpg(filePath);
     const s3Key = `converted-images/${fileName}.jpg`;
     await this.uploadToS3(convertedFilePath, s3Key);
 
     const textractResponse = await this.analyzeDocument(s3Key);
-
     const insights = await this.extractInsights(textractResponse);
+
     const { date, total, items, insights: insightArray } = insights;
+
+    // Parse the date using multiple formats
+    const parsedDate = this.parseDate(date);
+
+    if (!parsedDate) {
+      this.logger.warn(
+        `Invalid or unrecognized date format: ${date}. Defaulting to current date.`,
+      );
+    }
+
+    const parsedItems = items.map((item: any) => ({
+      ...item,
+      price: parseFloat(item.price.replace(/[^0-9.]/g, '')), // Clean and convert to number
+    }));
 
     const newReceipt = new this.fileModel({
       fileName,
-      date,
-      total,
-      items: JSON.stringify(items),
+      date: parsedDate || new Date(), // Use current date as fallback
+      total: parseFloat(total.replace(/[^0-9.]/g, '')), // Parse total as number
+      items: parsedItems, // Store items as an array
       insights: insightArray,
       rawTextractResponse: textractResponse,
     });
-    await newReceipt.save();
 
+    await newReceipt.save();
     await fsPromises.unlink(convertedFilePath);
 
     return newReceipt;
+  }
+
+  // Utility method to handle various date formats
+  private parseDate(dateString: string): Date | null {
+    const formats = [
+      'dd-MMM-yyyy',
+      'dd/MM/yyyy',
+      'yyyy-MM-dd',
+      'ddMMMyy',
+      'MMM dd, yyyy',
+    ];
+
+    for (const format of formats) {
+      const parsedDate = parse(dateString, format, new Date());
+      if (isValid(parsedDate)) {
+        return parsedDate;
+      }
+    }
+
+    // Last attempt with ISO parsing
+    const isoParsed = parseISO(dateString);
+    return isValid(isoParsed) ? isoParsed : null;
   }
 
   private async convertHeicToJpg(filePath: string): Promise<string> {
@@ -65,8 +103,8 @@ export class FileService {
 
     const outputBuffer = await convert({
       buffer: inputBuffer,
-      format: 'JPEG', // Convert to JPEG format
-      quality: 1, // Set quality (1 = max quality)
+      format: 'JPEG',
+      quality: 1,
     });
 
     await fsPromises.writeFile(outputFilePath, outputBuffer);
@@ -98,73 +136,15 @@ export class FileService {
     return this.textract.send(command);
   }
 
-  // private extractDataFromTextract(response: any) {
-  //   const parsedData = {
-  //     date: '',
-  //     items: [],
-  //     total: 0,
-  //   };
-
-  //   // Check and access ExpenseDocuments from the response
-  //   const expenseDocuments = response.ExpenseDocuments;
-  //   if (!expenseDocuments || expenseDocuments.length === 0) {
-  //     return parsedData;
-  //   }
-
-  //   // Loop through each ExpenseDocument
-  //   expenseDocuments.forEach((expenseDocument) => {
-  //     const { SummaryFields, LineItemGroups } = expenseDocument;
-
-  //     // Extract data from SummaryFields
-  //     SummaryFields?.forEach((field) => {
-  //       const label = field.LabelDetection?.Text || '';
-  //       const value = field.ValueDetection?.Text || '';
-
-  //       // Check for date and total based on labels in SummaryFields
-  //       if (/Date/i.test(label)) {
-  //         parsedData.date = value;
-  //       } else if (/Total/i.test(label)) {
-  //         parsedData.total = parseFloat(value.replace(/[^0-9.]/g, ''));
-  //       }
-  //     });
-
-  //     // Extract data from LineItemGroups (for item details)
-  //     LineItemGroups?.forEach((group) => {
-  //       group.LineItems?.forEach((lineItem) => {
-  //         const item = { name: '', price: 0 };
-
-  //         lineItem.LineItemExpenseFields?.forEach((field) => {
-  //           const label = field.Type?.Text || '';
-  //           const value = field.ValueDetection?.Text || '';
-
-  //           // Identify fields by their labels
-  //           if (/Description/i.test(label)) {
-  //             item.name = value;
-  //           } else if (/Price|Amount/i.test(label)) {
-  //             item.price = parseFloat(value.replace(/[^0-9.]/g, ''));
-  //           }
-  //         });
-
-  //         // Add item if it has a valid name and price
-  //         if (item.name && item.price) {
-  //           parsedData.items.push(item);
-  //         }
-  //       });
-  //     });
-  //   });
-
-  //   return parsedData;
-  // }
-
   private async extractInsights(response: Record<string, any>) {
     const prompt = `
       You are a receipt parser. Extract insights from AWS Textract's JSON response.
       Return a JSON object with the following structure:
       {
-        "date": "date of the transaction",
+        "date": "transaction date in dd-MMM-yyyy format like 23-Jun-2024",
         "total": "total amount on the receipt",
         "items": [
-          { "item": "name of item", "quantity": "quantity if available, else 1", "price": "price of the item" }
+          { "item": "name of item", "quantity": "quantity if available, else 1", "price": "price of the item", "category": "general category like 'food', 'electronics', 'clothing', 'health', 'office supplies', 'home essentials', 'entertainment', or 'other'" }
         ],
         "insights": "A string of interesting insights about the receipt, can be 2 or 3 sentences max"
       }
@@ -203,7 +183,6 @@ export class FileService {
         responseText += token.choices[0]?.delta?.content || '';
       }
 
-      // Extract JSON block if extra text is present
       const jsonMatch = responseText.match(/{[\s\S]*}/);
       if (!jsonMatch) {
         throw new Error(
@@ -211,10 +190,7 @@ export class FileService {
         );
       }
 
-      // Parse the extracted JSON
       const insights = JSON.parse(jsonMatch[0]);
-
-      // Validate and ensure fields match schema
       if (!insights.date || !insights.total || !Array.isArray(insights.items)) {
         throw new Error(
           'Insight extraction did not return the expected structure.',
@@ -226,5 +202,234 @@ export class FileService {
       this.logger.error('Error extracting insights:', error);
       throw new Error('Failed to extract insights from Together AI response.');
     }
+  }
+
+  async getInsights() {
+    return await this.fileModel.find({}, { rawTextractResponse: 0 });
+  }
+
+  async getCollectiveInsights() {
+    const [
+      basicSpend,
+      categorySpend,
+      itemFrequency,
+      avgSpendPerCategory,
+      monthlySpend,
+    ] = await Promise.all([
+      // Basic Spend Aggregation
+      this.fileModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalSpend: {
+              $sum: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$total' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$total',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$total',
+                  },
+                },
+              },
+            },
+            avgSpend: {
+              $avg: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$total' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$total',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$total',
+                  },
+                },
+              },
+            },
+            highestSpend: {
+              $max: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$total' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$total',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$total',
+                  },
+                },
+              },
+            },
+            lowestSpend: {
+              $min: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$total' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$total',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$total',
+                  },
+                },
+              },
+            },
+          },
+        },
+      ]),
+
+      // Category Spend Aggregation
+      this.fileModel.aggregate([
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.category',
+            totalCategorySpend: {
+              $sum: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$items.price' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$items.price',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$items.price',
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            categories: {
+              $push: { category: '$_id', spend: '$totalCategorySpend' },
+            },
+            grandTotalSpend: { $sum: '$totalCategorySpend' },
+          },
+        },
+        { $unwind: '$categories' },
+        {
+          $project: {
+            category: '$categories.category',
+            categorySpend: '$categories.spend',
+            spendPercentage: {
+              $cond: {
+                if: { $eq: ['$grandTotalSpend', 0] },
+                then: 0,
+                else: {
+                  $multiply: [
+                    { $divide: ['$categories.spend', '$grandTotalSpend'] },
+                    100,
+                  ],
+                },
+              },
+            },
+          },
+        },
+        { $sort: { categorySpend: -1 } },
+      ]),
+
+      // Item Frequency Aggregation
+      this.fileModel.aggregate([
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.item',
+            frequency: { $sum: 1 },
+          },
+        },
+        { $sort: { frequency: -1 } },
+        { $limit: 10 },
+      ]),
+
+      // Average Spend Per Category
+      this.fileModel.aggregate([
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.category',
+            averageSpendInCategory: {
+              $avg: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$items.price' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$items.price',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$items.price',
+                  },
+                },
+              },
+            },
+          },
+        },
+        { $sort: { averageSpendInCategory: -1 } },
+      ]),
+
+      // Monthly Spend Aggregation
+      this.fileModel.aggregate([
+        {
+          $group: {
+            _id: {
+              month: { $month: '$date' },
+              year: { $year: '$date' },
+            },
+            monthlySpend: {
+              $sum: {
+                $toDouble: {
+                  $cond: {
+                    if: { $eq: [{ $type: '$total' }, 'string'] },
+                    then: {
+                      $replaceAll: {
+                        input: '$total',
+                        find: '£',
+                        replacement: '',
+                      },
+                    },
+                    else: '$total',
+                  },
+                },
+              },
+            },
+          },
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } },
+      ]),
+    ]);
+
+    return {
+      totalSpend: basicSpend[0]?.totalSpend || 0,
+      averageSpend: basicSpend[0]?.avgSpend || 0,
+      highestSpend: basicSpend[0]?.highestSpend || 0,
+      lowestSpend: basicSpend[0]?.lowestSpend || 0,
+      categorySpendDistribution: categorySpend,
+      frequentItems: itemFrequency,
+      avgSpendPerCategory: avgSpendPerCategory,
+      monthlySpendTrend: monthlySpend,
+    };
   }
 }

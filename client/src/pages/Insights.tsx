@@ -28,14 +28,14 @@ const Insights = () => {
 
               <div className="mt-4">
                 <h3 className="text-md font-semibold">Items</h3>
-                <ul className="space-y-2">
+                <ul className="space-y-2 max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
                   {receipt.items.map((item, idx) => (
                     <li
                       key={idx}
-                      className="flex justify-between text-gray-700 dark:text-gray-300"
+                      className="flex justify-between text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700 pb-1"
                     >
                       <span>
-                        {item.item} ({item.quantity})
+                        {item.item} - x{item.quantity}
                       </span>
                       <span>
                         £{item.price.toFixed(2)} - {item.category}
@@ -43,6 +43,11 @@ const Insights = () => {
                     </li>
                   ))}
                 </ul>
+              </div>
+              <div className="pt-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                {receipt.items.length === 0
+                  ? "No items listed."
+                  : `${receipt.items.length} item(s)`}
               </div>
             </div>
           ))}

@@ -9,12 +9,23 @@ interface AverageSpendChartProps {
 export default function AverageSpendChart({
   categoryData,
 }: AverageSpendChartProps) {
+  // Consolidate categories
+  const consolidatedData = categoryData.reduce((acc, curr) => {
+    const category = toTitleCase(curr._id);
+    if (acc[category]) {
+      acc[category] += curr.averageSpendInCategory;
+    } else {
+      acc[category] = curr.averageSpendInCategory;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
   const data = {
-    labels: categoryData.map((c) => toTitleCase(c._id)),
+    labels: Object.keys(consolidatedData),
     datasets: [
       {
         label: "Average Spent",
-        data: categoryData.map((c) => c.averageSpendInCategory),
+        data: Object.values(consolidatedData),
         backgroundColor: "#36A2EB",
       },
     ],

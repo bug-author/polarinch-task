@@ -19,6 +19,7 @@ export class FileProcessor extends WorkerHost {
 
   async process(job: any) {
     const { filePath, fileName } = job.data;
+    console.log('fileName', fileName);
 
     try {
       const result = await this.fileService.processFile(filePath, fileName);

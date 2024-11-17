@@ -46,7 +46,7 @@ export default function MonthlySpendTrend({
 
   return (
     <div className="p-4 bg-white dark:bg-gray-800 shadow-md rounded-lg">
-      <h3 className="text-xl font-semibold mb-4">Monthly Spend Trent</h3>
+      <h3 className="text-xl font-semibold mb-4">Monthly Spend Trend</h3>
       <Line data={data} />
     </div>
   );
